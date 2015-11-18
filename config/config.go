@@ -42,6 +42,7 @@ type Protocols struct {
 	Pgsql    Pgsql
 	Redis    Redis
 	Thrift   Thrift
+	Avro     Avro
 }
 
 type ProtocolCommon struct {
@@ -107,6 +108,10 @@ type Thrift struct {
 }
 
 type Redis struct {
+	ProtocolCommon `yaml:",inline"`
+}
+
+type Avro struct {
 	ProtocolCommon `yaml:",inline"`
 }
 

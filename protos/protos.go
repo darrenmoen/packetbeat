@@ -107,6 +107,7 @@ const (
 	MongodbProtocol
 	DnsProtocol
 	MemcacheProtocol
+	AvroProtocol
 )
 
 // Protocol names
@@ -120,6 +121,7 @@ var ProtocolNames = []string{
 	"mongodb",
 	"dns",
 	"memcache",
+	"avro",
 }
 
 func (p Protocol) String() string {
