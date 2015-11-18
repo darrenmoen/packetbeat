@@ -27,8 +27,8 @@ func fieldsToArrayById(fields []*parser.Field) []*string {
 
 	max := 0
 	for _, field := range fields {
-		if field.ID > max {
-			max = field.ID
+		if field.Id > max {
+			max = field.Id
 		}
 	}
 
@@ -36,7 +36,7 @@ func fieldsToArrayById(fields []*parser.Field) []*string {
 
 	for _, field := range fields {
 		if len(field.Name) > 0 {
-			output[field.ID] = &field.Name
+			output[field.Id] = &field.Name
 		}
 	}
 

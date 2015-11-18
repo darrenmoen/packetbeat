@@ -26,18 +26,18 @@ type AvroMessage struct {
 	start int
 	end   int
 
-	Ts             time.Time
-	IsRequest      bool
-	PacketLength   uint32
-	Seq            uint8
-	Typ            uint8
-	IgnoreMessage  bool
-	Direction    uint8
-	IsTruncated  bool
-	TcpTuple     common.TcpTuple
-	CmdlineTuple *common.CmdlineTuple
-	Raw          []byte
-	Notes        []string
+	Ts            time.Time
+	IsRequest     bool
+	PacketLength  uint32
+	Seq           uint8
+	Typ           uint8
+	IgnoreMessage bool
+	Direction     uint8
+	IsTruncated   bool
+	TcpTuple      common.TcpTuple
+	CmdlineTuple  *common.CmdlineTuple
+	Raw           []byte
+	Notes         []string
 }
 
 type AvroTransaction struct {
@@ -56,7 +56,7 @@ type AvroTransaction struct {
 	BytesIn      uint64
 	Notes        []string
 
-	Avro         common.MapStr
+	Avro common.MapStr
 
 	Request_raw  string
 	Response_raw string
@@ -180,7 +180,7 @@ func avroMessageParser(s *AvroStream) (bool, bool) {
 	logp.Debug("avrodetailed", "Avro parser called. parseState = %s", s.parseState)
 
 	//m := s.message
-	
+
 	// TODO ...
 
 	return true, false
@@ -406,31 +406,31 @@ func (avro *Avro) receivedAvroResponse(msg *AvroMessage) {
 	}
 	// save json details
 	/*
-	trans.Mysql.Update(common.MapStr{
-		"affected_rows": msg.AffectedRows,
-		"insert_id":     msg.InsertId,
-		"num_rows":      msg.NumberOfRows,
-		"num_fields":    msg.NumberOfFields,
-		"iserror":       msg.IsError,
-		"error_code":    msg.ErrorCode,
-		"error_message": msg.ErrorInfo,
-	})
-	trans.BytesOut = msg.Size
-	trans.Path = msg.Tables
+		trans.Mysql.Update(common.MapStr{
+			"affected_rows": msg.AffectedRows,
+			"insert_id":     msg.InsertId,
+			"num_rows":      msg.NumberOfRows,
+			"num_fields":    msg.NumberOfFields,
+			"iserror":       msg.IsError,
+			"error_code":    msg.ErrorCode,
+			"error_message": msg.ErrorInfo,
+		})
+		trans.BytesOut = msg.Size
+		trans.Path = msg.Tables
 
-	trans.ResponseTime = int32(msg.Ts.Sub(trans.ts).Nanoseconds() / 1e6) // resp_time in milliseconds
+		trans.ResponseTime = int32(msg.Ts.Sub(trans.ts).Nanoseconds() / 1e6) // resp_time in milliseconds
 
-	// save Raw message
-	if len(msg.Raw) > 0 {
-		fields, rows := mysql.parseMysqlResponse(msg.Raw)
+		// save Raw message
+		if len(msg.Raw) > 0 {
+			fields, rows := mysql.parseMysqlResponse(msg.Raw)
 
-		trans.Response_raw = common.DumpInCSVFormat(fields, rows)
-	}
+			trans.Response_raw = common.DumpInCSVFormat(fields, rows)
+		}
 
-	trans.Notes = append(trans.Notes, msg.Notes...)
+		trans.Notes = append(trans.Notes, msg.Notes...)
 
-	mysql.publishTransaction(trans)
-	mysql.transactions.Delete(trans.tuple.Hashable())
+		mysql.publishTransaction(trans)
+		mysql.transactions.Delete(trans.tuple.Hashable())
 	*/
 	logp.Debug("avro", "Avro transaction completed: %s", trans.Avro)
 	logp.Debug("avro", "%s", trans.Response_raw)
@@ -461,9 +461,9 @@ func (avro *Avro) parseAvroResponse(data []byte) ([]string, [][]string) {
 	} else if uint8(data[4]) == 0xff {
 		// Error response
 	}
-	
+
 	// TODO ...
-	
+
 	return fields, rows
 }
 

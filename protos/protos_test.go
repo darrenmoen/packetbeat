@@ -94,6 +94,7 @@ func TestProtocolNames(t *testing.T) {
 	assert.Equal(t, "pgsql", PgsqlProtocol.String())
 	assert.Equal(t, "thrift", ThriftProtocol.String())
 	assert.Equal(t, "mongodb", MongodbProtocol.String())
+	assert.Equal(t, "avro", AvroProtocol.String())
 
 	assert.Equal(t, "impossible", Protocol(100).String())
 }
