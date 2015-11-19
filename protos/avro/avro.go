@@ -1,8 +1,6 @@
 package avro
 
 import (
-	"errors"
-	"fmt"
 	"time"
 
 	"github.com/elastic/libbeat/common"
@@ -15,13 +13,7 @@ import (
 	"github.com/elastic/packetbeat/protos/tcp"
 )
 
-// Packet types
-const (
-	MYSQL_CMD_QUERY = 3
-)
-
-const MAX_PAYLOAD_SIZE = 100 * 1024
-
+// Avro types
 type AvroMessage struct {
 	start int
 	end   int
@@ -38,6 +30,7 @@ type AvroMessage struct {
 	CmdlineTuple  *common.CmdlineTuple
 	Raw           []byte
 	Notes         []string
+	Size          uint64
 }
 
 type AvroTransaction struct {
@@ -51,7 +44,7 @@ type AvroTransaction struct {
 	ts           time.Time
 	Query        string
 	Method       string
-	Path         string // for mysql, Path refers to the mysql table queried
+	Path         string
 	BytesOut     uint64
 	BytesIn      uint64
 	Notes        []string
@@ -109,7 +102,8 @@ type Avro struct {
 	results publisher.Client
 
 	// function pointer for mocking
-	handleAvro func(mysql *Avro, m *AvroMessage, tcp *common.TcpTuple,
+	// is this needed?
+	handleAvro func(avro *Avro, m *AvroMessage, tcp *common.TcpTuple,
 		dir uint8, raw_msg []byte)
 }
 
@@ -234,7 +228,9 @@ func (avro *Avro) ConnectionTimeout() time.Duration {
 func (avro *Avro) Parse(pkt *protos.Packet, tcptuple *common.TcpTuple,
 	dir uint8, private protos.ProtocolData) protos.ProtocolData {
 
-	defer logp.Recover("AvroMysql exception")
+	defer logp.Recover("Avro exception")
+	
+	logp.Debug("avrodetailed", "Payload received: [%s]", pkt.Payload)
 
 	priv := avroPrivateData{}
 	if private != nil {
@@ -383,13 +379,14 @@ func (avro *Avro) receivedAvroRequest(msg *AvroMessage) {
 	trans.Method = method
 
 	trans.Avro = common.MapStr{}
-
+	trans.Request_raw = msg.Query
+	*/
 	trans.Notes = msg.Notes
 
 	// save Raw message
-	trans.Request_raw = msg.Query
+	
 	trans.BytesIn = msg.Size
-	*/
+	
 }
 
 func (avro *Avro) receivedAvroResponse(msg *AvroMessage) {
@@ -404,67 +401,20 @@ func (avro *Avro) receivedAvroResponse(msg *AvroMessage) {
 		return
 
 	}
+	
+	trans.BytesOut = msg.Size
+	trans.ResponseTime = int32(msg.Ts.Sub(trans.ts).Nanoseconds() / 1e6) // resp_time in milliseconds
+	trans.Notes = append(trans.Notes, msg.Notes...)
+	
+	if avro.Send_response {
+		// TODO add raw response
+	}
 	// save json details
-	/*
-		trans.Mysql.Update(common.MapStr{
-			"affected_rows": msg.AffectedRows,
-			"insert_id":     msg.InsertId,
-			"num_rows":      msg.NumberOfRows,
-			"num_fields":    msg.NumberOfFields,
-			"iserror":       msg.IsError,
-			"error_code":    msg.ErrorCode,
-			"error_message": msg.ErrorInfo,
-		})
-		trans.BytesOut = msg.Size
-		trans.Path = msg.Tables
-
-		trans.ResponseTime = int32(msg.Ts.Sub(trans.ts).Nanoseconds() / 1e6) // resp_time in milliseconds
-
-		// save Raw message
-		if len(msg.Raw) > 0 {
-			fields, rows := mysql.parseMysqlResponse(msg.Raw)
-
-			trans.Response_raw = common.DumpInCSVFormat(fields, rows)
-		}
-
-		trans.Notes = append(trans.Notes, msg.Notes...)
-
-		mysql.publishTransaction(trans)
-		mysql.transactions.Delete(trans.tuple.Hashable())
-	*/
+	avro.publishTransaction(trans)
+	avro.transactions.Delete(trans.tuple.Hashable())
+	
 	logp.Debug("avro", "Avro transaction completed: %s", trans.Avro)
 	logp.Debug("avro", "%s", trans.Response_raw)
-}
-
-func (avro *Avro) parseAvroResponse(data []byte) ([]string, [][]string) {
-
-	length, err := read_length(data, 0)
-	if err != nil {
-		logp.Warn("Invalid response: %v", err)
-		return []string{}, [][]string{}
-	}
-	if length < 1 {
-		logp.Warn("Warning: Skipping empty Response")
-		return []string{}, [][]string{}
-	}
-
-	fields := []string{}
-	rows := [][]string{}
-
-	if len(data) < 5 {
-		logp.Warn("Invalid response: data less than 4 bytes")
-		return []string{}, [][]string{}
-	}
-
-	if uint8(data[4]) == 0x00 {
-		// OK response
-	} else if uint8(data[4]) == 0xff {
-		// Error response
-	}
-
-	// TODO ...
-
-	return fields, rows
 }
 
 func (avro *Avro) publishTransaction(t *AvroTransaction) {
@@ -507,60 +457,4 @@ func (avro *Avro) publishTransaction(t *AvroTransaction) {
 	event["dst"] = &t.Dst
 
 	avro.results.PublishEvent(event)
-}
-
-func read_lstring(data []byte, offset int) ([]byte, int, bool, error) {
-	length, off, complete, err := read_linteger(data, offset)
-	if err != nil {
-		return nil, 0, false, err
-	}
-	if !complete || len(data[off:]) < int(length) {
-		return nil, 0, false, nil
-	}
-
-	return data[off : off+int(length)], off + int(length), true, nil
-}
-func read_linteger(data []byte, offset int) (uint64, int, bool, error) {
-	if len(data) < offset+1 {
-		return 0, 0, false, nil
-	}
-	switch uint8(data[offset]) {
-	case 0xfe:
-		if len(data[offset+1:]) < 8 {
-			return 0, 0, false, nil
-		}
-		return uint64(data[offset+1]) | uint64(data[offset+2])<<8 |
-				uint64(data[offset+2])<<16 | uint64(data[offset+3])<<24 |
-				uint64(data[offset+4])<<32 | uint64(data[offset+5])<<40 |
-				uint64(data[offset+6])<<48 | uint64(data[offset+7])<<56,
-			offset + 9, true, nil
-	case 0xfd:
-		if len(data[offset+1:]) < 3 {
-			return 0, 0, false, nil
-		}
-		return uint64(data[offset+1]) | uint64(data[offset+2])<<8 |
-			uint64(data[offset+3])<<16, offset + 4, true, nil
-	case 0xfc:
-		if len(data[offset+1:]) < 2 {
-			return 0, 0, false, nil
-		}
-		return uint64(data[offset+1]) | uint64(data[offset+2])<<8, offset + 3, true, nil
-	}
-
-	if uint64(data[offset]) >= 0xfb {
-		return 0, 0, false, fmt.Errorf("Unexpected value in read_linteger")
-	}
-
-	return uint64(data[offset]), offset + 1, true, nil
-}
-
-// Read a avro length field (3 bytes LE)
-func read_length(data []byte, offset int) (int, error) {
-	if len(data[offset:]) < 3 {
-		return 0, errors.New("Data too small to contain a valid length")
-	}
-	length := uint32(data[offset]) |
-		uint32(data[offset+1])<<8 |
-		uint32(data[offset+2])<<16
-	return int(length), nil
 }
