@@ -1,12 +1,6 @@
 package avro
 
 import (
-	"bytes"
-	"errors"
-	"fmt"
-	"net/url"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/elastic/libbeat/common"
@@ -18,111 +12,19 @@ import (
 	"github.com/elastic/packetbeat/protos/tcp"
 )
 
-const (
-	START = iota
-	FLINE
-	HEADERS
-	BODY
-	BODY_CHUNKED_START
-	BODY_CHUNKED
-	BODY_CHUNKED_WAIT_FINAL_CRLF
-)
-
-// Avro Message
-type AvroMessage struct {
-	Ts               time.Time
-	hasContentLength bool
-	headerOffset     int
-	bodyOffset       int
-	version_major    uint8
-	version_minor    uint8
-	connection       string
-	chunked_length   int
-	chunked_body     []byte
-
-	IsRequest    bool
-	TcpTuple     common.TcpTuple
-	CmdlineTuple *common.CmdlineTuple
-	Direction    uint8
-	//Request Info
-	FirstLine    string
-	RequestUri   string
-	Method       string
-	StatusCode   uint16
-	StatusPhrase string
-	Real_ip      string
-	// Avro Headers
-	ContentLength    int
-	ContentType      string
-	TransferEncoding string
-	Headers          map[string]string
-	Body             string
-	Size             uint64
-	//Raw Data
-	Raw []byte
-
-	Notes []string
-
-	//Timing
-	start int
-	end   int
-}
-
-type AvroStream struct {
-	tcptuple *common.TcpTuple
-
-	data []byte
-
-	parseOffset  int
-	parseState   int
-	bodyReceived int
-
-	message *AvroMessage
-}
-
-type AvroTransaction struct {
-	Type         string
-	tuple        common.TcpTuple
-	Src          common.Endpoint
-	Dst          common.Endpoint
-	Real_ip      string
-	ResponseTime int32
-	Ts           int64
-	JsTs         time.Time
-	ts           time.Time
-	cmdline      *common.CmdlineTuple
-	Method       string
-	RequestUri   string
-	Params       string
-	Path         string
-	BytesOut     uint64
-	BytesIn      uint64
-	Notes        []string
-
-	Avro common.MapStr
-
-	Request_raw  string
-	Response_raw string
-}
-
 type Avro struct {
 	// config
-	Ports                []int
-	Send_request         bool
-	Send_response        bool
-	Send_headers         bool
-	Send_all_headers     bool
-	Headers_whitelist    map[string]bool
-	Split_cookie         bool
-	Real_ip_header       string
-	Hide_keywords        []string
-	Redact_authorization bool
+	Ports         []int
+	Send_request  bool
+	Send_response bool
 
 	transactions       *common.Cache
 	transactionTimeout time.Duration
 
 	results publisher.Client
 }
+
+var debug = logp.MakeDebug("avro")
 
 func (avro *Avro) getTransaction(k common.HashableTcpTuple) *AvroTransaction {
 	v := avro.transactions.Get(k)
@@ -135,7 +37,6 @@ func (avro *Avro) getTransaction(k common.HashableTcpTuple) *AvroTransaction {
 func (avro *Avro) InitDefaults() {
 	avro.Send_request = false
 	avro.Send_response = false
-	avro.Redact_authorization = false
 	avro.transactionTimeout = protos.DefaultTransactionExpiration
 }
 
@@ -162,6 +63,7 @@ func (avro *Avro) GetPorts() []int {
 }
 
 func (avro *Avro) Init(test_mode bool, results publisher.Client) error {
+	debug("init avro plugin")
 	avro.InitDefaults()
 
 	if !test_mode {
@@ -180,257 +82,22 @@ func (avro *Avro) Init(test_mode bool, results publisher.Client) error {
 	return nil
 }
 
-func parseVersion(s []byte) (uint8, uint8, error) {
-	if len(s) < 3 {
-		return 0, 0, errors.New("Invalid version")
-	}
-
-	major, _ := strconv.Atoi(string(s[0]))
-	minor, _ := strconv.Atoi(string(s[2]))
-
-	return uint8(major), uint8(minor), nil
-}
-
-func parseResponseStatus(s []byte) (uint16, string, error) {
-
-	logp.Debug("avro", "parseResponseStatus: %s", s)
-
-	p := bytes.Index(s, []byte(" "))
-	if p == -1 {
-		return 0, "", errors.New("Not beeing able to identify status code")
-	}
-
-	status_code, _ := strconv.Atoi(string(s[0:p]))
-
-	p = bytes.LastIndex(s, []byte(" "))
-	if p == -1 {
-		return uint16(status_code), "", errors.New("Not beeing able to identify status code")
-	}
-	status_phrase := s[p+1:]
-	return uint16(status_code), string(status_phrase), nil
-}
-
-func (avro *Avro) parseHeader(m *AvroMessage, data []byte) (bool, bool, int) {
-	if m.Headers == nil {
-		m.Headers = make(map[string]string)
-	}
-	i := bytes.Index(data, []byte(":"))
-	if i == -1 {
-		// Expected \":\" in headers. Assuming incomplete"
-		return true, false, 0
-	}
-
-	logp.Debug("avrodetailed", "Data: %s", data)
-	logp.Debug("avrodetailed", "Header: %s", data[:i])
-
-	// skip folding line
-	for p := i + 1; p < len(data); {
-		q := bytes.Index(data[p:], []byte("\r\n"))
-		if q == -1 {
-			// Assuming incomplete
-			return true, false, 0
-		}
-		p += q
-		logp.Debug("avrodetailed", "HV: %s\n", data[i+1:p])
-		if len(data) > p && (data[p+1] == ' ' || data[p+1] == '\t') {
-			p = p + 2
-		} else {
-			headerName := strings.ToLower(string(data[:i]))
-			headerVal := string(bytes.Trim(data[i+1:p], " \t"))
-			logp.Debug("avro", "Header: '%s' Value: '%s'\n", headerName, headerVal)
-
-			// Headers we need for parsing. Make sure we always
-			// capture their value
-			if headerName == "content-length" {
-				m.ContentLength, _ = strconv.Atoi(headerVal)
-				m.hasContentLength = true
-			} else if headerName == "content-type" {
-				m.ContentType = headerVal
-			} else if headerName == "transfer-encoding" {
-				m.TransferEncoding = headerVal
-			} else if headerName == "connection" {
-				m.connection = headerVal
-			}
-			if len(avro.Real_ip_header) > 0 && headerName == avro.Real_ip_header {
-				m.Real_ip = headerVal
-			}
-
-			if avro.Send_headers {
-				if !avro.Send_all_headers {
-					_, exists := avro.Headers_whitelist[headerName]
-					if !exists {
-						return true, true, p + 2
-					}
-				}
-				if val, ok := m.Headers[headerName]; ok {
-					m.Headers[headerName] = val + ", " + headerVal
-				} else {
-					m.Headers[headerName] = headerVal
-				}
-			}
-
-			return true, true, p + 2
-		}
-	}
-
-	return true, false, len(data)
-}
-
 func (avro *Avro) messageParser(s *AvroStream) (bool, bool) {
 
-	var cont, ok, complete bool
+	//var cont, ok, complete bool
 	m := s.message
-
-	for s.parseOffset < len(s.data) {
-		switch s.parseState {
-		case START:
-			m.start = s.parseOffset
-			i := bytes.Index(s.data[s.parseOffset:], []byte("\r\n"))
-			if i == -1 {
-				return true, false
-			}
-
-			// Very basic tests on the first line. Just to check that
-			// we have what looks as an HTTP message
-			var version []byte
-			var err error
-			fline := s.data[s.parseOffset:i]
-			if len(fline) < 8 {
-				logp.Debug("avro", "First line too small")
-				return false, false
-			}
-			if bytes.Equal(fline[0:5], []byte("HTTP/")) {
-				//RESPONSE
-				m.IsRequest = false
-				version = fline[5:8]
-				m.StatusCode, m.StatusPhrase, err = parseResponseStatus(fline[9:])
-				if err != nil {
-					logp.Warn("Failed to understand HTTP response status: %s", fline[9:])
-					return false, false
-				}
-				logp.Debug("avro", "HTTP status_code=%d, status_phrase=%s", m.StatusCode, m.StatusPhrase)
-
-			} else {
-				// REQUEST
-				slices := bytes.Fields(fline)
-				if len(slices) != 3 {
-					logp.Debug("avro", "Couldn't understand HTTP request: %s", fline)
-					return false, false
-				}
-
-				m.Method = string(slices[0])
-				m.RequestUri = string(slices[1])
-
-				if bytes.Equal(slices[2][:5], []byte("HTTP/")) {
-					m.IsRequest = true
-					version = slices[2][5:]
-					m.FirstLine = string(fline)
-				} else {
-					logp.Debug("avro", "Couldn't understand HTTP version: %s", fline)
-					return false, false
-				}
-				logp.Debug("avro", "HTTP Method=%s, RequestUri=%s", m.Method, m.RequestUri)
-			}
-
-			m.version_major, m.version_minor, err = parseVersion(version)
-			if err != nil {
-				logp.Debug("avro", "Failed to understand HTTP version: %s", version)
-				m.version_major = 1
-				m.version_minor = 0
-			}
-			logp.Debug("avro", "HTTP version %d.%d", m.version_major, m.version_minor)
-
-			// ok so far
-			s.parseOffset = i + 2
-			m.headerOffset = s.parseOffset
-			s.parseState = HEADERS
-
-		case HEADERS:
-
-			if len(s.data)-s.parseOffset >= 2 &&
-				bytes.Equal(s.data[s.parseOffset:s.parseOffset+2], []byte("\r\n")) {
-				// EOH
-				s.parseOffset += 2
-				m.bodyOffset = s.parseOffset
-				if !m.IsRequest && ((100 <= m.StatusCode && m.StatusCode < 200) || m.StatusCode == 204 || m.StatusCode == 304) {
-					//response with a 1xx, 204 , or 304 status  code is always terminated
-					// by the first empty line after the  header fields
-					logp.Debug("avro", "Terminate response, status code %d", m.StatusCode)
-					m.end = s.parseOffset
-					m.Size = uint64(m.end - m.start)
-					return true, true
-				}
-				if m.TransferEncoding == "chunked" {
-					// support for HTTP/1.1 Chunked transfer
-					// Transfer-Encoding overrides the Content-Length
-					logp.Debug("avro", "Read chunked body")
-					s.parseState = BODY_CHUNKED_START
-					continue
-				}
-				if m.ContentLength == 0 && (m.IsRequest || m.hasContentLength) {
-					logp.Debug("avro", "Empty content length, ignore body")
-					// Ignore body for request that contains a message body but not a Content-Length
-					m.end = s.parseOffset
-					m.Size = uint64(m.end - m.start)
-					return true, true
-				}
-				logp.Debug("avro", "Read body")
-				s.parseState = BODY
-			} else {
-				ok, hfcomplete, offset := avro.parseHeader(m, s.data[s.parseOffset:])
-
-				if !ok {
-					return false, false
-				}
-				if !hfcomplete {
-					return true, false
-				}
-				s.parseOffset += offset
-			}
-
-		case BODY:
-			logp.Debug("avro", "eat body: %d", s.parseOffset)
-			if !m.hasContentLength && (m.connection == "close" ||
-				(m.version_major == 1 && m.version_minor == 0 &&
-					m.connection != "keep-alive")) {
-
-				// HTTP/1.0 no content length. Add until the end of the connection
-				logp.Debug("avro", "close connection, %d", len(s.data)-s.parseOffset)
-				s.bodyReceived += (len(s.data) - s.parseOffset)
-				m.ContentLength += (len(s.data) - s.parseOffset)
-				s.parseOffset = len(s.data)
-				return true, false
-			} else if len(s.data[s.parseOffset:]) >= m.ContentLength-s.bodyReceived {
-				s.parseOffset += (m.ContentLength - s.bodyReceived)
-				m.end = s.parseOffset
-				m.Size = uint64(m.end - m.start)
-				return true, true
-			} else {
-				s.bodyReceived += (len(s.data) - s.parseOffset)
-				s.parseOffset = len(s.data)
-				logp.Debug("avro", "bodyReceived: %d", s.bodyReceived)
-				return true, false
-			}
-
-		case BODY_CHUNKED_START:
-			cont, ok, complete = state_body_chunked_start(s, m)
-			if !cont {
-				return ok, complete
-			}
-
-		case BODY_CHUNKED:
-			cont, ok, complete = state_body_chunked(s, m)
-			if !cont {
-				return ok, complete
-			}
-
-		case BODY_CHUNKED_WAIT_FINAL_CRLF:
-			return state_body_chunked_wait_final_crlf(s, m)
-		}
-
+	debug("avro", "messageParser")
+	// TODO parse message
+	trans := avro.getTransaction(m.TcpTuple.Hashable())
+	if trans != nil {
+		m.IsRequest = false
+	} else {
+		m.IsRequest = true
 	}
-
-	return true, false
+	
+	//codec, err := goavro.NewCodec(someRecordSchemaJson)
+	
+	return true, true
 }
 
 // messageGap is called when a gap of size `nbytes` is found in the
@@ -438,113 +105,15 @@ func (avro *Avro) messageParser(s *AvroStream) (bool, bool) {
 // and we need to drop the stream.
 func (avro *Avro) messageGap(s *AvroStream, nbytes int) (ok bool, complete bool) {
 
-	m := s.message
-	switch s.parseState {
-	case START, HEADERS:
-		// we know we cannot recover from these
-		return false, false
-	case BODY:
-		logp.Debug("avro", "gap in body: %d", nbytes)
-		if m.IsRequest {
-			m.Notes = append(m.Notes, "Packet loss while capturing the request")
-		} else {
-			m.Notes = append(m.Notes, "Packet loss while capturing the response")
-		}
-		if !m.hasContentLength && (m.connection == "close" ||
-			(m.version_major == 1 && m.version_minor == 0 &&
-				m.connection != "keep-alive")) {
+	logp.Debug("avro", "messageGap")
 
-			s.bodyReceived += nbytes
-			m.ContentLength += nbytes
-			return true, false
-		} else if len(s.data[s.parseOffset:])+nbytes >= m.ContentLength-s.bodyReceived {
-			// we're done, but the last portion of the data is gone
-			m.end = s.parseOffset
-			return true, true
-		} else {
-			s.bodyReceived += nbytes
-			return true, false
-		}
-	}
 	// assume we cannot recover
 	return false, false
 }
 
-func state_body_chunked_wait_final_crlf(s *AvroStream, m *AvroMessage) (ok bool, complete bool) {
-	if len(s.data[s.parseOffset:]) < 2 {
-		return true, false
-	} else {
-		if s.data[s.parseOffset] != '\r' || s.data[s.parseOffset+1] != '\n' {
-			logp.Warn("Expected CRLF sequence at end of message")
-			return false, false
-		}
-		s.parseOffset += 2 // skip final CRLF
-		m.end = s.parseOffset
-		m.Size = uint64(m.end - m.start)
-		return true, true
-	}
-}
-
-func state_body_chunked_start(s *AvroStream, m *AvroMessage) (cont bool, ok bool, complete bool) {
-	// read hexa length
-	i := bytes.Index(s.data[s.parseOffset:], []byte("\r\n"))
-	if i == -1 {
-		return false, true, false
-	}
-	line := string(s.data[s.parseOffset : s.parseOffset+i])
-	_, err := fmt.Sscanf(line, "%x", &m.chunked_length)
-	if err != nil {
-		logp.Warn("Failed to understand chunked body start line")
-		return false, false, false
-	}
-
-	s.parseOffset += i + 2 //+ \r\n
-	if m.chunked_length == 0 {
-		if len(s.data[s.parseOffset:]) < 2 {
-			s.parseState = BODY_CHUNKED_WAIT_FINAL_CRLF
-			return false, true, false
-		}
-		if s.data[s.parseOffset] != '\r' || s.data[s.parseOffset+1] != '\n' {
-			logp.Warn("Expected CRLF sequence at end of message")
-			return false, false, false
-		}
-		s.parseOffset += 2 // skip final CRLF
-
-		m.end = s.parseOffset
-		m.Size = uint64(m.end - m.start)
-		return false, true, true
-	}
-	s.bodyReceived = 0
-	s.parseState = BODY_CHUNKED
-
-	return true, true, false
-}
-
-func state_body_chunked(s *AvroStream, m *AvroMessage) (cont bool, ok bool, complete bool) {
-
-	if len(s.data[s.parseOffset:]) >= m.chunked_length-s.bodyReceived+2 /*\r\n*/ {
-		// Received more data than expected
-		m.chunked_body = append(m.chunked_body, s.data[s.parseOffset:s.parseOffset+m.chunked_length-s.bodyReceived]...)
-		s.parseOffset += (m.chunked_length - s.bodyReceived + 2 /*\r\n*/)
-		m.ContentLength += m.chunked_length
-		s.parseState = BODY_CHUNKED_START
-		return true, true, false
-	} else {
-		if len(s.data[s.parseOffset:]) >= m.chunked_length-s.bodyReceived {
-			// we need need to wait for the +2, else we can crash on next call
-			return false, true, false
-		}
-		// Received less data than expected
-		m.chunked_body = append(m.chunked_body, s.data[s.parseOffset:]...)
-		s.bodyReceived += (len(s.data) - s.parseOffset)
-		s.parseOffset = len(s.data)
-		return false, true, false
-	}
-}
-
 func (stream *AvroStream) PrepareForNewMessage() {
+	logp.Debug("avro", "PrepareForNewMessage")
 	stream.data = stream.data[stream.message.end:]
-	stream.parseState = START
 	stream.parseOffset = 0
 	stream.bodyReceived = 0
 	stream.message = nil
@@ -557,8 +126,9 @@ type avroPrivateData struct {
 // Called when the parser has identified the boundary
 // of a message.
 func (avro *Avro) messageComplete(tcptuple *common.TcpTuple, dir uint8, stream *AvroStream) {
-	msg := stream.data[stream.message.start:stream.message.end]
-	avro.hideHeaders(stream.message, msg)
+	logp.Debug("avro", "messageComplete")
+	//msg := stream.data[stream.message.start:stream.message.end]
+	msg := stream.data
 
 	avro.handleAvro(stream.message, tcptuple, dir, msg)
 
@@ -570,23 +140,21 @@ func (avro *Avro) ConnectionTimeout() time.Duration {
 	return avro.transactionTimeout
 }
 
-func (avro *Avro) readString(data []byte) (string, bool, bool, int) {
-	if len(data) < 4 {
-		return "", true, false, 0 // ok, not complete
-	}
-	sz := int(common.Bytes_Ntohl(data[:4]))
-	if int32(sz) < 0 {
-		return "", false, false, 0 // not ok
-	}
-	if len(data[4:]) < sz {
-		return "", true, false, 0 // ok, not complete
+func getPrivateData(private protos.ProtocolData) *avroPrivateData {
+	if private == nil {
+		return &avroPrivateData{}
 	}
 
-	value := string(data[4 : 4+sz])
-	
-	off := 4 + sz
-
-	return value, true, true, off // all good
+	priv, ok := private.(*avroPrivateData)
+	if !ok {
+		logp.Warn("avro connection data type error, create new one")
+		return &avroPrivateData{}
+	}
+	if priv == nil {
+		logp.Warn("Unexpected: avro private data not set, create new one")
+		return &avroPrivateData{}
+	}
+	return priv
 }
 
 func (avro *Avro) Parse(pkt *protos.Packet, tcptuple *common.TcpTuple,
@@ -594,17 +162,9 @@ func (avro *Avro) Parse(pkt *protos.Packet, tcptuple *common.TcpTuple,
 
 	defer logp.Recover("ParseHttp exception")
 
-	priv := avroPrivateData{}
-	
-	logp.Debug("avrodetailed", "Payload received: [%s]", pkt.Payload)
-	
-	if private != nil {
-		var ok bool
-		priv, ok = private.(avroPrivateData)
-		if !ok {
-			priv = avroPrivateData{}
-		}
-	}
+	priv := getPrivateData(private)
+
+	logp.Debug("avrodetailed", "Parse payload received: [%s]", dir)
 
 	if priv.Data[dir] == nil {
 		priv.Data[dir] = &AvroStream{
@@ -667,7 +227,6 @@ func (avro *Avro) ReceivedFin(tcptuple *common.TcpTuple, dir uint8,
 		logp.Debug("avrodetailed", "Publish something on connection FIN")
 
 		msg := stream.data[stream.message.start:]
-		avro.hideHeaders(stream.message, msg)
 
 		avro.handleAvro(stream.message, tcptuple, dir, msg)
 
@@ -682,7 +241,7 @@ func (avro *Avro) ReceivedFin(tcptuple *common.TcpTuple, dir uint8,
 // packet loss).
 func (avro *Avro) GapInStream(tcptuple *common.TcpTuple, dir uint8,
 	nbytes int, private protos.ProtocolData) (priv protos.ProtocolData, drop bool) {
-
+	logp.Debug("avro", "GapInStream")
 	defer logp.Recover("GapInStream(avro) exception")
 
 	if private == nil {
@@ -717,21 +276,19 @@ func (avro *Avro) GapInStream(tcptuple *common.TcpTuple, dir uint8,
 
 func (avro *Avro) handleAvro(m *AvroMessage, tcptuple *common.TcpTuple,
 	dir uint8, raw_msg []byte) {
-
 	m.TcpTuple = *tcptuple
 	m.Direction = dir
 	m.CmdlineTuple = procs.ProcWatcher.FindProcessesTuple(tcptuple.IpPort())
-	m.Raw = raw_msg
 
 	if m.IsRequest {
-		avro.receivedHttpRequest(m)
+		avro.receivedAvroRequest(m)
 	} else {
-		avro.receivedHttpResponse(m)
+		avro.receivedAvroResponse(m)
 	}
 }
 
-func (avro *Avro) receivedHttpRequest(msg *AvroMessage) {
-
+func (avro *Avro) receivedAvroRequest(msg *AvroMessage) {
+	logp.Debug("avro", "receivedAvroRequest")
 	trans := avro.getTransaction(msg.TcpTuple.Hashable())
 	if trans != nil {
 		if len(trans.Avro) != 0 {
@@ -746,7 +303,6 @@ func (avro *Avro) receivedHttpRequest(msg *AvroMessage) {
 
 	trans.ts = msg.Ts
 	trans.Ts = int64(trans.ts.UnixNano() / 1000)
-	trans.JsTs = msg.Ts
 	trans.Src = common.Endpoint{
 		Ip:   msg.TcpTuple.Src_ip.String(),
 		Port: msg.TcpTuple.Src_port,
@@ -761,43 +317,23 @@ func (avro *Avro) receivedHttpRequest(msg *AvroMessage) {
 		trans.Src, trans.Dst = trans.Dst, trans.Src
 	}
 
-	trans.Request_raw = string(avro.cutMessageBody(msg))
+	//trans.Request_raw = string(avro.cutMessageBody(msg))
 
-	trans.Method = msg.Method
-	trans.RequestUri = msg.RequestUri
 	trans.BytesIn = msg.Size
 	trans.Notes = msg.Notes
 
 	trans.Avro = common.MapStr{}
-
-	if avro.Send_headers {
-		if !avro.Split_cookie {
-			trans.Avro["request_headers"] = msg.Headers
-		} else {
-			hdrs := common.MapStr{}
-			for hdr_name, hdr_val := range msg.Headers {
-				if hdr_name == "cookie" {
-					hdrs[hdr_name] = splitCookiesHeader(hdr_val)
-				} else {
-					hdrs[hdr_name] = hdr_val
-				}
-			}
-
-			trans.Avro["request_headers"] = hdrs
-		}
-	}
-
 	trans.Real_ip = msg.Real_ip
 
 	var err error
-	trans.Path, trans.Params, err = avro.extractParameters(msg, msg.Raw)
+	//trans.Path, trans.Params, err = avro.extractParameters(msg, msg.Raw)
 	if err != nil {
 		logp.Warn("avro", "Fail to parse HTTP parameters: %v", err)
 	}
 }
 
-func (avro *Avro) receivedHttpResponse(msg *AvroMessage) {
-
+func (avro *Avro) receivedAvroResponse(msg *AvroMessage) {
+	logp.Debug("avro", "receivedAvroResponse")
 	// we need to search the request first.
 	tuple := msg.TcpTuple
 
@@ -815,26 +351,8 @@ func (avro *Avro) receivedHttpResponse(msg *AvroMessage) {
 	}
 
 	response := common.MapStr{
-		"phrase":         msg.StatusPhrase,
-		"code":           msg.StatusCode,
-		"content_length": msg.ContentLength,
-	}
-
-	if avro.Send_headers {
-		if !avro.Split_cookie {
-			response["response_headers"] = msg.Headers
-		} else {
-			hdrs := common.MapStr{}
-			for hdr_name, hdr_val := range msg.Headers {
-				if hdr_name == "set-cookie" {
-					hdrs[hdr_name] = splitCookiesHeader(hdr_val)
-				} else {
-					hdrs[hdr_name] = hdr_val
-				}
-			}
-
-			response["response_headers"] = hdrs
-		}
+		"code":           "ddd",
+		"content_length": "ddd2",
 	}
 
 	trans.BytesOut = msg.Size
@@ -843,11 +361,6 @@ func (avro *Avro) receivedHttpResponse(msg *AvroMessage) {
 
 	trans.ResponseTime = int32(msg.Ts.Sub(trans.ts).Nanoseconds() / 1e6) // resp_time in milliseconds
 
-	// save Raw message
-	if avro.Send_response {
-		trans.Response_raw = string(avro.cutMessageBody(msg))
-	}
-
 	avro.publishTransaction(trans)
 	avro.transactions.Delete(trans.tuple.Hashable())
 
@@ -855,7 +368,7 @@ func (avro *Avro) receivedHttpResponse(msg *AvroMessage) {
 }
 
 func (avro *Avro) publishTransaction(t *AvroTransaction) {
-
+	logp.Debug("avro", "publishTransaction")
 	if avro.results == nil {
 		return
 	}
@@ -870,20 +383,11 @@ func (avro *Avro) publishTransaction(t *AvroTransaction) {
 		event["status"] = common.ERROR_STATUS
 	}
 	event["responsetime"] = t.ResponseTime
-	//if avro.Send_request {
-		event["request"] = t.Request_raw
-	//}
-	//if avro.Send_response {
-		event["response"] = t.Response_raw
-	//}
+
 	event["avro"] = t.Avro
 	if len(t.Real_ip) > 0 {
 		event["real_ip"] = t.Real_ip
 	}
-	event["method"] = t.Method
-	event["path"] = t.Path
-	event["query"] = fmt.Sprintf("%s %s", t.Method, t.Path)
-	event["params"] = t.Params
 
 	event["bytes_out"] = t.BytesOut
 	event["bytes_in"] = t.BytesIn
@@ -898,29 +402,6 @@ func (avro *Avro) publishTransaction(t *AvroTransaction) {
 	avro.results.PublishEvent(event)
 }
 
-func parseCookieValue(raw string) string {
-	// Strip the quotes, if present.
-	if len(raw) > 1 && raw[0] == '"' && raw[len(raw)-1] == '"' {
-		raw = raw[1 : len(raw)-1]
-	}
-	return raw
-}
-
-func splitCookiesHeader(headerVal string) map[string]string {
-	cookies := map[string]string{}
-
-	cstring := strings.Split(headerVal, ";")
-	for _, cval := range cstring {
-		cookie := strings.SplitN(cval, "=", 2)
-		if len(cookie) == 2 {
-			cookies[strings.ToLower(strings.TrimSpace(cookie[0]))] =
-				parseCookieValue(strings.TrimSpace(cookie[1]))
-		}
-	}
-
-	return cookies
-}
-
 func (avro *Avro) cutMessageBody(m *AvroMessage) []byte {
 	raw_msg_cut := []byte{}
 
@@ -928,121 +409,20 @@ func (avro *Avro) cutMessageBody(m *AvroMessage) []byte {
 	raw_msg_cut = m.Raw[:m.bodyOffset]
 
 	// add body
-	if len(m.ContentType) == 0 || avro.shouldIncludeInBody(m.ContentType) {
-		if len(m.chunked_body) > 0 {
-			raw_msg_cut = append(raw_msg_cut, m.chunked_body...)
-		} else {
-			logp.Debug("avro", "Body to include: [%s]", m.Raw[m.bodyOffset:])
-			raw_msg_cut = append(raw_msg_cut, m.Raw[m.bodyOffset:]...)
+	/*
+		if len(m.ContentType) == 0 || avro.shouldIncludeInBody(m.ContentType) {
+			if len(m.chunked_body) > 0 {
+				raw_msg_cut = append(raw_msg_cut, m.chunked_body...)
+			} else {
+				logp.Debug("avro", "Body to include: [%s]", m.Raw[m.bodyOffset:])
+				raw_msg_cut = append(raw_msg_cut, m.Raw[m.bodyOffset:]...)
+			}
 		}
-	}
+	*/
 
 	return raw_msg_cut
 }
 
 func (avro *Avro) shouldIncludeInBody(contenttype string) bool {
 	return true
-}
-
-func (avro *Avro) hideHeaders(m *AvroMessage, msg []byte) {
-
-	if m.IsRequest {
-		// byte64 != encryption, so obscure it in headers in case of Basic Authentication
-		if avro.Redact_authorization {
-
-			redactHeaders := []string{"authorization", "proxy-authorization"}
-			auth_text := []byte("uthorization:") // [aA] case insensitive, also catches Proxy-Authorization:
-
-			authHeaderStartX := m.headerOffset
-			authHeaderEndX := m.bodyOffset
-
-			for authHeaderStartX < m.bodyOffset {
-				logp.Debug("avro", "looking for authorization from %d to %d", authHeaderStartX, authHeaderEndX)
-
-				startOfHeader := bytes.Index(msg[authHeaderStartX:m.bodyOffset], auth_text)
-				if startOfHeader >= 0 {
-					authHeaderStartX = authHeaderStartX + startOfHeader
-
-					endOfHeader := bytes.Index(msg[authHeaderStartX:m.bodyOffset], []byte("\r\n"))
-					if endOfHeader >= 0 {
-						authHeaderEndX = authHeaderStartX + endOfHeader
-
-						if authHeaderEndX > m.bodyOffset {
-							authHeaderEndX = m.bodyOffset
-						}
-
-						logp.Debug("avro", "Redact authorization from %d to %d", authHeaderStartX, authHeaderEndX)
-
-						for i := authHeaderStartX + len(auth_text); i < authHeaderEndX; i++ {
-							msg[i] = byte('*')
-						}
-					}
-				}
-				authHeaderStartX = authHeaderEndX + len("\r\n")
-				authHeaderEndX = m.bodyOffset
-			}
-			for _, header := range redactHeaders {
-				if m.Headers[header] != "" {
-					m.Headers[header] = "*"
-				}
-			}
-		}
-	}
-}
-
-func (avro *Avro) hideSecrets(values url.Values) url.Values {
-
-	params := url.Values{}
-	for key, array := range values {
-		for _, value := range array {
-			if avro.isSecretParameter(key) {
-				params.Add(key, "xxxxx")
-			} else {
-				params.Add(key, value)
-			}
-		}
-	}
-	return params
-}
-
-// extractParameters parses the URL and the form parameters and replaces the secrets
-// with the string xxxxx. The parameters containing secrets are defined in avro.Hide_secrets.
-// Returns the Request URI path and the (ajdusted) parameters.
-func (avro *Avro) extractParameters(m *AvroMessage, msg []byte) (path string, params string, err error) {
-	var values url.Values
-
-	u, err := url.Parse(m.RequestUri)
-	if err != nil {
-		return
-	}
-	values = u.Query()
-	path = u.Path
-
-	paramsMap := avro.hideSecrets(values)
-
-	if m.ContentLength > 0 && strings.Contains(m.ContentType, "urlencoded") {
-		values, err = url.ParseQuery(string(msg[m.bodyOffset:]))
-		if err != nil {
-			return
-		}
-
-		for key, value := range avro.hideSecrets(values) {
-			paramsMap[key] = value
-		}
-	}
-	params = paramsMap.Encode()
-
-	logp.Debug("	", "Parameters: %s", params)
-
-	return
-}
-
-func (avro *Avro) isSecretParameter(key string) bool {
-
-	for _, keyword := range avro.Hide_keywords {
-		if strings.ToLower(key) == keyword {
-			return true
-		}
-	}
-	return false
 }
