@@ -117,6 +117,10 @@
 			"ImportPath": "labix.org/v2/mgo/bson",
 			"Comment": "287",
 			"Rev": "gustavo@niemeyer.net-20130722041249-5v5syfwrb8gq243v"
-		}
+		},
+        {
+            "ImportPath": "github.com/linkedin/goavro",
+            "Rev": "f04489eae1ebc55d81daaba1118b781d28c0d5f4"
+        }
 	]
 }
