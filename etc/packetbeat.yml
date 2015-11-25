@@ -112,6 +112,12 @@ protocols:
     # the MongoDB protocol by commenting out the list of ports.
     ports: [27017]
 
+  avro:
+    # Configure the ports where to listen for AVRO traffic. You can disable
+    # the AVRO protocol by commenting out the list of ports. AVRO can be transmitted
+    # via different transport mechanisms and doesn't have a standard port.
+    ports: [45454]
+
 ############################# Processes #######################################
 
 # Configure the processes to be monitored and how to find them. If a process is
