@@ -52,5 +52,5 @@ type AvroTransaction struct {
 	BytesIn      uint64
 	Notes        []string
 
-	Avro         common.MapStr
+	Avro common.MapStr
 }

@@ -86,7 +86,6 @@ func (avro *Avro) messageParser(s *AvroStream) (bool, bool) {
 
 	// TODO ...
 	//m := s.message
-	
 
 	return true, true
 }
@@ -152,7 +151,7 @@ func (avro *Avro) Parse(pkt *protos.Packet, tcptuple *common.TcpTuple,
 	dir uint8, private protos.ProtocolData) protos.ProtocolData {
 
 	defer logp.Recover("ParseHttp exception")
-	
+
 	priv := getPrivateData(private)
 
 	logp.Debug("avrodetailed", "Parse payload received: [%v]", dir)
