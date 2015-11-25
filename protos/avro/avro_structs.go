@@ -20,7 +20,7 @@ type AvroMessage struct {
 	chunked_length int
 	chunked_body   []byte
 	bodyOffset     int
-	
+
 	//Timing
 	start int
 	end   int
@@ -52,5 +52,5 @@ type AvroTransaction struct {
 	BytesIn      uint64
 	Notes        []string
 
-	Avro common.MapStr
+	Avro         common.MapStr
 }

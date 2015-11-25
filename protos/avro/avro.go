@@ -84,19 +84,10 @@ func (avro *Avro) Init(test_mode bool, results publisher.Client) error {
 
 func (avro *Avro) messageParser(s *AvroStream) (bool, bool) {
 
-	//var cont, ok, complete bool
-	m := s.message
-	debug("avro", "messageParser")
-	// TODO parse message
-	trans := avro.getTransaction(m.TcpTuple.Hashable())
-	if trans != nil {
-		m.IsRequest = false
-	} else {
-		m.IsRequest = true
-	}
+	// TODO ...
+	//m := s.message
 	
-	//codec, err := goavro.NewCodec(someRecordSchemaJson)
-	
+
 	return true, true
 }
 
@@ -161,10 +152,10 @@ func (avro *Avro) Parse(pkt *protos.Packet, tcptuple *common.TcpTuple,
 	dir uint8, private protos.ProtocolData) protos.ProtocolData {
 
 	defer logp.Recover("ParseHttp exception")
-
+	
 	priv := getPrivateData(private)
 
-	logp.Debug("avrodetailed", "Parse payload received: [%s]", dir)
+	logp.Debug("avrodetailed", "Parse payload received: [%v]", dir)
 
 	if priv.Data[dir] == nil {
 		priv.Data[dir] = &AvroStream{
