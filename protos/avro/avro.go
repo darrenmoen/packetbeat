@@ -83,11 +83,16 @@ func (avro *Avro) Init(test_mode bool, results publisher.Client) error {
 }
 
 func (avro *Avro) messageParser(s *AvroStream) (bool, bool) {
+	avroMap, err := parseAvro(s.data)
+	if err == nil {
+		logp.Debug("avro", "messageParser success")
+		m := s.message
+		m.IsRequest = true
+		m.Avro = avroMap
+		return true, true
+	}
 
-	// TODO ...
-	//m := s.message
-
-	return true, true
+	return true, false
 }
 
 // messageGap is called when a gap of size `nbytes` is found in the
@@ -160,7 +165,7 @@ func (avro *Avro) Parse(pkt *protos.Packet, tcptuple *common.TcpTuple,
 		priv.Data[dir] = &AvroStream{
 			tcptuple: tcptuple,
 			data:     pkt.Payload,
-			message:  &AvroMessage{Ts: pkt.Ts},
+			message:  &AvroMessage{Ts: pkt.Ts, IsRequest: true},
 		}
 
 	} else {
@@ -172,10 +177,9 @@ func (avro *Avro) Parse(pkt *protos.Packet, tcptuple *common.TcpTuple,
 			return priv
 		}
 	}
+
 	stream := priv.Data[dir]
-	if stream.message == nil {
-		stream.message = &AvroMessage{Ts: pkt.Ts}
-	}
+
 	ok, complete := avro.messageParser(stream)
 
 	if !ok {
@@ -270,6 +274,8 @@ func (avro *Avro) handleAvro(m *AvroMessage, tcptuple *common.TcpTuple,
 	m.Direction = dir
 	m.CmdlineTuple = procs.ProcWatcher.FindProcessesTuple(tcptuple.IpPort())
 
+	logp.Debug("avro", "IsRequest %v", m.IsRequest)
+
 	if m.IsRequest {
 		avro.receivedAvroRequest(m)
 	} else {
@@ -307,19 +313,13 @@ func (avro *Avro) receivedAvroRequest(msg *AvroMessage) {
 		trans.Src, trans.Dst = trans.Dst, trans.Src
 	}
 
-	//trans.Request_raw = string(avro.cutMessageBody(msg))
-
 	trans.BytesIn = msg.Size
 	trans.Notes = msg.Notes
 
-	trans.Avro = common.MapStr{}
-	trans.Real_ip = msg.Real_ip
+	trans.Avro = msg.Avro
 
-	var err error
-	//trans.Path, trans.Params, err = avro.extractParameters(msg, msg.Raw)
-	if err != nil {
-		logp.Warn("avro", "Fail to parse HTTP parameters: %v", err)
-	}
+	// FIXME this is a one way comm. solution
+	avro.publishTransaction(trans)
 }
 
 func (avro *Avro) receivedAvroResponse(msg *AvroMessage) {
@@ -340,13 +340,8 @@ func (avro *Avro) receivedAvroResponse(msg *AvroMessage) {
 		return
 	}
 
-	response := common.MapStr{
-		"code":           "ddd",
-		"content_length": "ddd2",
-	}
-
 	trans.BytesOut = msg.Size
-	trans.Avro.Update(response)
+	trans.Avro = msg.Avro
 	trans.Notes = append(trans.Notes, msg.Notes...)
 
 	trans.ResponseTime = int32(msg.Ts.Sub(trans.ts).Nanoseconds() / 1e6) // resp_time in milliseconds
@@ -366,18 +361,14 @@ func (avro *Avro) publishTransaction(t *AvroTransaction) {
 	event := common.MapStr{}
 
 	event["type"] = "avro"
-	code := t.Avro["code"].(uint16)
-	if code < 400 {
-		event["status"] = common.OK_STATUS
-	} else {
-		event["status"] = common.ERROR_STATUS
-	}
+	event["status"] = common.OK_STATUS
 	event["responsetime"] = t.ResponseTime
 
-	event["avro"] = t.Avro
-	if len(t.Real_ip) > 0 {
-		event["real_ip"] = t.Real_ip
+	avromap := common.MapStr{
+		"request": t.Avro,
 	}
+	
+	event["avro"] = avromap
 
 	event["bytes_out"] = t.BytesOut
 	event["bytes_in"] = t.BytesIn
@@ -388,31 +379,7 @@ func (avro *Avro) publishTransaction(t *AvroTransaction) {
 	if len(t.Notes) > 0 {
 		event["notes"] = t.Notes
 	}
-
+	
+	logp.Debug("avro", "publishing %s", event)
 	avro.results.PublishEvent(event)
-}
-
-func (avro *Avro) cutMessageBody(m *AvroMessage) []byte {
-	raw_msg_cut := []byte{}
-
-	// add headers always
-	raw_msg_cut = m.Raw[:m.bodyOffset]
-
-	// add body
-	/*
-		if len(m.ContentType) == 0 || avro.shouldIncludeInBody(m.ContentType) {
-			if len(m.chunked_body) > 0 {
-				raw_msg_cut = append(raw_msg_cut, m.chunked_body...)
-			} else {
-				logp.Debug("avro", "Body to include: [%s]", m.Raw[m.bodyOffset:])
-				raw_msg_cut = append(raw_msg_cut, m.Raw[m.bodyOffset:]...)
-			}
-		}
-	*/
-
-	return raw_msg_cut
-}
-
-func (avro *Avro) shouldIncludeInBody(contenttype string) bool {
-	return true
 }

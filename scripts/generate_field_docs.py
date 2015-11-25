@@ -19,6 +19,7 @@ SECTIONS = [
     ("thrift", "Thrift-RPC"),
     ("redis", "Redis"),
     ("mongodb", "MongoDb"),
+    ("avro", "Avro"),
     ("measurements", "Measurements"),
     ("env", "Environmental"),
     ("raw", "Raw")]

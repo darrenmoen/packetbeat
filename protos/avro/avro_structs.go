@@ -8,18 +8,18 @@ import (
 
 // Avro Message
 type AvroMessage struct {
-	Ts             time.Time
-	TcpTuple       common.TcpTuple
-	CmdlineTuple   *common.CmdlineTuple
-	Direction      uint8
-	IsRequest      bool
-	Size           uint64
-	Notes          []string
-	Real_ip        string
-	Raw            []byte
+	Ts           time.Time
+	TcpTuple     common.TcpTuple
+	CmdlineTuple *common.CmdlineTuple
+	Direction    uint8
+	IsRequest    bool
+	Size         uint64
+	Notes        []string
+
 	chunked_length int
 	chunked_body   []byte
 	bodyOffset     int
+	Avro           common.MapStr
 
 	//Timing
 	start int
@@ -43,7 +43,6 @@ type AvroTransaction struct {
 	tuple        common.TcpTuple
 	Src          common.Endpoint
 	Dst          common.Endpoint
-	Real_ip      string
 	ResponseTime int32
 	Ts           int64
 	ts           time.Time
