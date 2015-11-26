@@ -87,9 +87,8 @@ func TestSimpleFindLimit1(t *testing.T) {
 
 	trans := expectTransaction(t, avro)
 
-	//assert.Equal(t, "OK", trans["status"])
-	//assert.Equal(t, "find", trans["method"])
-	//assert.Equal(t, "avrp", trans["type"])
+	assert.Equal(t, "OK", trans["status"])
+	assert.Equal(t, "avro", trans["type"])
 
 	logp.Debug("Avro", "Trans: %v", trans)
 }

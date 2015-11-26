@@ -11,15 +11,14 @@ type AvroMessage struct {
 	Ts           time.Time
 	TcpTuple     common.TcpTuple
 	CmdlineTuple *common.CmdlineTuple
-	Direction    uint8
-	IsRequest    bool
-	Size         uint64
-	Notes        []string
 
-	chunked_length int
-	chunked_body   []byte
-	bodyOffset     int
-	Avro           common.MapStr
+	Method    string
+	Direction uint8
+	IsRequest bool
+	Size      uint64
+
+	// map of the parsed avro record
+	Fields common.MapStr
 
 	//Timing
 	start int
@@ -31,9 +30,9 @@ type AvroStream struct {
 
 	data []byte
 
-	parseOffset  int
-	parseState   int
-	bodyReceived int
+	//parseOffset  int
+	//parseState   int
+	//bodyReceived int
 
 	message *AvroMessage
 }
@@ -51,5 +50,10 @@ type AvroTransaction struct {
 	BytesIn      uint64
 	Notes        []string
 
+	// maybe rename to Request and add response?
 	Avro common.MapStr
+}
+
+type avroPrivateData struct {
+	Data [2]*AvroStream
 }

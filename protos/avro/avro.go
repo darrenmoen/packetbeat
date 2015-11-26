@@ -63,7 +63,6 @@ func (avro *Avro) GetPorts() []int {
 }
 
 func (avro *Avro) Init(test_mode bool, results publisher.Client) error {
-	debug("init avro plugin")
 	avro.InitDefaults()
 
 	if !test_mode {
@@ -83,12 +82,17 @@ func (avro *Avro) Init(test_mode bool, results publisher.Client) error {
 }
 
 func (avro *Avro) messageParser(s *AvroStream) (bool, bool) {
+
+	//logp.Debug("avrodetailed", "messageParser called parseState=%v offset=%v",
+	//	s.parseState, s.parseOffset)
+
+	// TODO determine if this message is a request or response
+
 	avroMap, err := parseAvro(s.data)
 	if err == nil {
 		logp.Debug("avro", "messageParser success")
 		m := s.message
-		m.IsRequest = true
-		m.Avro = avroMap
+		m.Fields = avroMap
 		return true, true
 	}
 
@@ -109,26 +113,9 @@ func (avro *Avro) messageGap(s *AvroStream, nbytes int) (ok bool, complete bool)
 func (stream *AvroStream) PrepareForNewMessage() {
 	logp.Debug("avro", "PrepareForNewMessage")
 	stream.data = stream.data[stream.message.end:]
-	stream.parseOffset = 0
-	stream.bodyReceived = 0
+	//stream.parseOffset = 0
+	//stream.bodyReceived = 0
 	stream.message = nil
-}
-
-type avroPrivateData struct {
-	Data [2]*AvroStream
-}
-
-// Called when the parser has identified the boundary
-// of a message.
-func (avro *Avro) messageComplete(tcptuple *common.TcpTuple, dir uint8, stream *AvroStream) {
-	logp.Debug("avro", "messageComplete")
-	//msg := stream.data[stream.message.start:stream.message.end]
-	msg := stream.data
-
-	avro.handleAvro(stream.message, tcptuple, dir, msg)
-
-	// and reset message
-	stream.PrepareForNewMessage()
 }
 
 func (avro *Avro) ConnectionTimeout() time.Duration {
@@ -180,111 +167,72 @@ func (avro *Avro) Parse(pkt *protos.Packet, tcptuple *common.TcpTuple,
 
 	stream := priv.Data[dir]
 
-	ok, complete := avro.messageParser(stream)
+	for len(stream.data) > 0 {
+		if stream.message == nil {
+			stream.message = &AvroMessage{Ts: pkt.Ts}
+		}
 
-	if !ok {
-		// drop this tcp stream. Will retry parsing with the next
-		// segment in it
-		priv.Data[dir] = nil
-		return priv
-	}
-
-	if complete {
-		// all ok, ship it
-		avro.messageComplete(tcptuple, dir, stream)
+		ok, complete := avro.messageParser(stream)
+		if !ok {
+			// drop this tcp stream. Will retry parsing with the next
+			// segment in it
+			priv.Data[dir] = nil
+			return priv
+		}
+		if complete {
+			// all ok, ship it
+			avro.messageComplete(tcptuple, dir, stream)
+		} else {
+			// wait for more data
+			break
+		}
 	}
 
 	return priv
 }
 
+// Called when the parser has identified the boundary
+// of a message.
+func (avro *Avro) messageComplete(tcptuple *common.TcpTuple, dir uint8, stream *AvroStream) {
+	logp.Debug("avro", "messageComplete")
+	//msg := stream.data[stream.message.start:stream.message.end]
+	stream.message.TcpTuple = *tcptuple
+	stream.message.Direction = dir
+	stream.message.CmdlineTuple = procs.ProcWatcher.FindProcessesTuple(tcptuple.IpPort())
+
+	avro.handleAvro(stream.message)
+
+	// and reset message
+	stream.PrepareForNewMessage()
+}
+
 func (avro *Avro) ReceivedFin(tcptuple *common.TcpTuple, dir uint8,
 	private protos.ProtocolData) protos.ProtocolData {
 
-	if private == nil {
-		return private
-	}
-	avroData, ok := private.(avroPrivateData)
-	if !ok {
-		return private
-	}
-	if avroData.Data[dir] == nil {
-		return avroData
-	}
-
-	stream := avroData.Data[dir]
-
-	// send whatever data we got so far as complete. This
-	// is needed for the HTTP/1.0 without Content-Length situation.
-	if stream.message != nil &&
-		len(stream.data[stream.message.start:]) > 0 {
-
-		logp.Debug("avrodetailed", "Publish something on connection FIN")
-
-		msg := stream.data[stream.message.start:]
-
-		avro.handleAvro(stream.message, tcptuple, dir, msg)
-
-		// and reset message. Probably not needed, just to be sure.
-		stream.PrepareForNewMessage()
-	}
-
-	return avroData
+	// TODO
+	return private
 }
 
 // Called when a gap of nbytes bytes is found in the stream (due to
 // packet loss).
 func (avro *Avro) GapInStream(tcptuple *common.TcpTuple, dir uint8,
 	nbytes int, private protos.ProtocolData) (priv protos.ProtocolData, drop bool) {
-	logp.Debug("avro", "GapInStream")
-	defer logp.Recover("GapInStream(avro) exception")
 
-	if private == nil {
-		return private, false
-	}
-	avroData, ok := private.(avroPrivateData)
-	if !ok {
-		return private, false
-	}
-	stream := avroData.Data[dir]
-	if stream == nil || stream.message == nil {
-		// nothing to do
-		return private, false
-	}
-
-	ok, complete := avro.messageGap(stream, nbytes)
-	logp.Debug("avrodetailed", "messageGap returned ok=%v complete=%v", ok, complete)
-	if !ok {
-		// on errors, drop stream
-		avroData.Data[dir] = nil
-		return avroData, true
-	}
-
-	if complete {
-		// Current message is complete, we need to publish from here
-		avro.messageComplete(tcptuple, dir, stream)
-	}
-
-	// don't drop the stream, we can ignore the gap
-	return private, false
+	return private, true
 }
 
-func (avro *Avro) handleAvro(m *AvroMessage, tcptuple *common.TcpTuple,
-	dir uint8, raw_msg []byte) {
-	m.TcpTuple = *tcptuple
-	m.Direction = dir
-	m.CmdlineTuple = procs.ProcWatcher.FindProcessesTuple(tcptuple.IpPort())
+func (avro *Avro) handleAvro(msg *AvroMessage) {
 
-	logp.Debug("avro", "IsRequest %v", m.IsRequest)
-
-	if m.IsRequest {
-		avro.receivedAvroRequest(m)
+	if msg.IsRequest {
+		avro.receivedAvroRequest(msg)
 	} else {
-		avro.receivedAvroResponse(m)
+		avro.receivedAvroResponse(msg)
 	}
 }
 
 func (avro *Avro) receivedAvroRequest(msg *AvroMessage) {
 	logp.Debug("avro", "receivedAvroRequest")
+
 	trans := avro.getTransaction(msg.TcpTuple.Hashable())
 	if trans != nil {
 		if len(trans.Avro) != 0 {
@@ -314,9 +262,7 @@ func (avro *Avro) receivedAvroRequest(msg *AvroMessage) {
 	}
 
 	trans.BytesIn = msg.Size
-	trans.Notes = msg.Notes
-
-	trans.Avro = msg.Avro
+	trans.Avro = msg.Fields
 
 	// FIXME this is a one way comm. solution
 	avro.publishTransaction(trans)
@@ -341,8 +287,7 @@ func (avro *Avro) receivedAvroResponse(msg *AvroMessage) {
 	}
 
 	trans.BytesOut = msg.Size
-	trans.Avro = msg.Avro
-	trans.Notes = append(trans.Notes, msg.Notes...)
+	trans.Avro = msg.Fields
 
 	trans.ResponseTime = int32(msg.Ts.Sub(trans.ts).Nanoseconds() / 1e6) // resp_time in milliseconds
 
