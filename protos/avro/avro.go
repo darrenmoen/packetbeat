@@ -367,7 +367,7 @@ func (avro *Avro) publishTransaction(t *AvroTransaction) {
 	avromap := common.MapStr{
 		"request": t.Avro,
 	}
-	
+
 	event["avro"] = avromap
 
 	event["bytes_out"] = t.BytesOut
@@ -379,7 +379,7 @@ func (avro *Avro) publishTransaction(t *AvroTransaction) {
 	if len(t.Notes) > 0 {
 		event["notes"] = t.Notes
 	}
-	
+
 	logp.Debug("avro", "publishing %s", event)
 	avro.results.PublishEvent(event)
 }
