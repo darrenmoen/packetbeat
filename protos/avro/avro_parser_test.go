@@ -13,10 +13,27 @@ func TestEmptyInput(t *testing.T) {
 	if testing.Verbose() {
 		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"avro", "avrodetailed"})
 	}
-	
+
 	emptyByteArray := []byte("")
-	
+
 	avroAsJson, err := parseAvro(emptyByteArray)
+	assert.NotNil(t, err)
+	assert.Nil(t, avroAsJson)
+}
+
+// Test an invalid byte array input.
+func TestInvalidInput(t *testing.T) {
+	if testing.Verbose() {
+		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"avro", "avrodetailed"})
+	}
+
+	invalidHex :=
+		"4f626a0104166176726f2e736368656d61be047b2274797065223a2022726563"
+
+	byteArray, err := hex.DecodeString(invalidHex)
+	assert.Nil(t, err)
+
+	avroAsJson, err := parseAvro(byteArray)
 	assert.NotNil(t, err)
 	assert.Nil(t, avroAsJson)
 }

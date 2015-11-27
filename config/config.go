@@ -113,6 +113,7 @@ type Redis struct {
 
 type Avro struct {
 	ProtocolCommon `yaml:",inline"`
+	Asynchronous   *bool
 }
 
 // Config Singleton

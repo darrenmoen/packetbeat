@@ -84,7 +84,6 @@ func TestSinglePacket(t *testing.T) {
 	assert.Equal(t, "avro", trans["type"])
 }
 
-
 // Test split packet.
 func TestSplitPackets(t *testing.T) {
 	if testing.Verbose() {
@@ -109,19 +108,19 @@ func TestSplitPackets(t *testing.T) {
 			"20656e636f646564206176726f21211427186c9d0d21cbcf68ac8053b1441a"
 
 	// need +1 offsets to ensure correct length hex strings
-	req_data_1, err := hex.DecodeString(avroAsHex[:1 + len(avroAsHex)/2])
+	req_data_1, err := hex.DecodeString(avroAsHex[:1+len(avroAsHex)/2])
 	assert.Nil(t, err)
 
-	req_data_2, err := hex.DecodeString(avroAsHex[len(avroAsHex)/2 + 1:])
+	req_data_2, err := hex.DecodeString(avroAsHex[len(avroAsHex)/2+1:])
 	assert.Nil(t, err)
 
 	tcptuple := testTcpTuple()
-	
+
 	req := protos.Packet{Payload: req_data_1}
 	private := protos.ProtocolData(new(avroPrivateData))
 
 	private = avro.Parse(&req, tcptuple, 0, private)
-	
+
 	req = protos.Packet{Payload: req_data_2}
 
 	private = avro.Parse(&req, tcptuple, 0, private)

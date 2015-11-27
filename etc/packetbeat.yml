@@ -117,6 +117,8 @@ protocols:
     # the AVRO protocol by commenting out the list of ports. AVRO can be transmitted
     # via different transport mechanisms and doesn't have a standard port.
     ports: [45454]
+    # Default: true
+    # Asynchronous: true
 
 ############################# Processes #######################################
 

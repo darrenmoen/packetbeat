@@ -132,9 +132,8 @@ protocols:
 {% if mongodb_max_doc_length is not none %}    max_doc_length: {{mongodb_max_doc_length}}{% endif %}
 
   avro:
-    ports: [{{ avro_ports|default([5000])|join(", ") }}]
-{% if avro_send_request %}    send_request: true{% endif %}
-{% if avro_send_response %}    send_response: true{% endif %}
+    ports: [{{ avro_ports|default([45454])|join(", ") }}]
+{% if Asynchronous is not none %}    Asynchronous: {{Asynchronous}}{% endif %}
 
 ############################# Filters #########################################
 
