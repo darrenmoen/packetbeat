@@ -92,8 +92,6 @@ func (avro *Avro) messageParser(s *AvroStream) (bool, bool) {
 	if err == nil {
 		logp.Debug("avro", "messageParser success")
 		m := s.message
-		// FIXME - this should not be done here
-		m.IsRequest = true
 		m.Fields = avroMap
 		return true, true
 	}
@@ -150,14 +148,18 @@ func (avro *Avro) Parse(pkt *protos.Packet, tcptuple *common.TcpTuple,
 	priv := getPrivateData(private)
 
 	logp.Debug("avrodetailed", "Parse payload received: [%v]", dir)
+	logp.Debug("avrodetailed", "stream id: [%v]", tcptuple.Stream_id)
 
 	if priv.Data[dir] == nil {
+		
+		// TODO maybe determine if it's a response based on priv.Data
+		// in the other direction?
+		
 		priv.Data[dir] = &AvroStream{
 			tcptuple: tcptuple,
 			data:     pkt.Payload,
-			message:  &AvroMessage{Ts: pkt.Ts},
+			message:  &AvroMessage{Ts: pkt.Ts, IsRequest: true},
 		}
-
 	} else {
 		// append current packet to previous packets
 		priv.Data[dir].data = append(priv.Data[dir].data, pkt.Payload...)
@@ -203,6 +205,12 @@ func (avro *Avro) messageComplete(tcptuple *common.TcpTuple, dir uint8, stream *
 	stream.message.Direction = dir
 	stream.message.CmdlineTuple = procs.ProcWatcher.FindProcessesTuple(tcptuple.IpPort())
 
+	// TODO determine if this is a response, if so set flag 'IsRequest = false)
+	//trans := avro.getTransaction(tcptuple.Hashable())
+	//if trans != nil {
+	//	stream.message.IsRequest = false
+	//}
+
 	avro.handleAvro(stream.message)
 
 	// and reset message
@@ -212,7 +220,7 @@ func (avro *Avro) messageComplete(tcptuple *common.TcpTuple, dir uint8, stream *
 func (avro *Avro) ReceivedFin(tcptuple *common.TcpTuple, dir uint8,
 	private protos.ProtocolData) protos.ProtocolData {
 
-	// TODO
+	// TODO when I implement responses
 	return private
 }
 
