@@ -48,7 +48,7 @@ type AvroTransaction struct {
 	cmdline      *common.CmdlineTuple
 	BytesOut     uint64
 	BytesIn      uint64
-	Notes        []string
+	//Notes        []string
 
 	// maybe rename to Request and add response?
 	Avro common.MapStr

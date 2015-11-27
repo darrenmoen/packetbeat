@@ -92,6 +92,8 @@ func (avro *Avro) messageParser(s *AvroStream) (bool, bool) {
 	if err == nil {
 		logp.Debug("avro", "messageParser success")
 		m := s.message
+		// FIXME - this should not be done here
+		m.IsRequest = true
 		m.Fields = avroMap
 		return true, true
 	}
@@ -112,7 +114,7 @@ func (avro *Avro) messageGap(s *AvroStream, nbytes int) (ok bool, complete bool)
 
 func (stream *AvroStream) PrepareForNewMessage() {
 	logp.Debug("avro", "PrepareForNewMessage")
-	stream.data = stream.data[stream.message.end:]
+	stream.data = []byte{} //stream.data[stream.message.end:]
 	//stream.parseOffset = 0
 	//stream.bodyReceived = 0
 	stream.message = nil
@@ -121,6 +123,7 @@ func (stream *AvroStream) PrepareForNewMessage() {
 func (avro *Avro) ConnectionTimeout() time.Duration {
 	return avro.transactionTimeout
 }
+
 
 func getPrivateData(private protos.ProtocolData) *avroPrivateData {
 	if private == nil {
@@ -152,11 +155,11 @@ func (avro *Avro) Parse(pkt *protos.Packet, tcptuple *common.TcpTuple,
 		priv.Data[dir] = &AvroStream{
 			tcptuple: tcptuple,
 			data:     pkt.Payload,
-			message:  &AvroMessage{Ts: pkt.Ts, IsRequest: true},
+			message:  &AvroMessage{Ts: pkt.Ts},
 		}
 
 	} else {
-		// concatenate bytes
+		// append current packet to previous packets
 		priv.Data[dir].data = append(priv.Data[dir].data, pkt.Payload...)
 		if len(priv.Data[dir].data) > tcp.TCP_MAX_DATA_IN_STREAM {
 			logp.Debug("avro", "Stream data too large, dropping TCP stream")
@@ -167,26 +170,26 @@ func (avro *Avro) Parse(pkt *protos.Packet, tcptuple *common.TcpTuple,
 
 	stream := priv.Data[dir]
 
-	for len(stream.data) > 0 {
-		if stream.message == nil {
-			stream.message = &AvroMessage{Ts: pkt.Ts}
-		}
-
-		ok, complete := avro.messageParser(stream)
-		if !ok {
-			// drop this tcp stream. Will retry parsing with the next
-			// segment in it
-			priv.Data[dir] = nil
-			return priv
-		}
-		if complete {
-			// all ok, ship it
-			avro.messageComplete(tcptuple, dir, stream)
-		} else {
-			// wait for more data
-			break
-		}
+	//for len(stream.data) > 0 {
+	if stream.message == nil {
+		stream.message = &AvroMessage{Ts: pkt.Ts}
 	}
+
+	ok, complete := avro.messageParser(stream)
+	if !ok {
+		// drop this tcp stream. Will retry parsing with the next
+		// segment in it
+		priv.Data[dir] = nil
+		return priv
+	}
+	if complete {
+		// all ok, ship it
+		avro.messageComplete(tcptuple, dir, stream)
+	} //else {
+	// wait for more data
+	//break
+	//}
+	//}
 
 	return priv
 }
@@ -266,39 +269,40 @@ func (avro *Avro) receivedAvroRequest(msg *AvroMessage) {
 
 	// FIXME this is a one way comm. solution
 	avro.publishTransaction(trans)
+	avro.transactions.Delete(trans.tuple.Hashable())
 }
 
 func (avro *Avro) receivedAvroResponse(msg *AvroMessage) {
-	logp.Debug("avro", "receivedAvroResponse")
-	// we need to search the request first.
-	tuple := msg.TcpTuple
+	/*
+		logp.Debug("avro", "receivedAvroResponse")
+		// we need to search the request first.
+		tuple := msg.TcpTuple
 
-	logp.Debug("avro", "Received response with tuple: %s", tuple)
+		logp.Debug("avro", "Received response with tuple: %s", tuple)
 
-	trans := avro.getTransaction(tuple.Hashable())
-	if trans == nil {
-		logp.Warn("Response from unknown transaction. Ignoring: %v", tuple)
-		return
-	}
+		trans := avro.getTransaction(tuple.Hashable())
+		if trans == nil {
+			logp.Warn("Response from unknown transaction. Ignoring: %v", tuple)
+			return
+		}
 
-	if trans.Avro == nil {
-		logp.Warn("Response without a known request. Ignoring.")
-		return
-	}
+		if trans.Avro == nil {
+			logp.Warn("Response without a known request. Ignoring.")
+			return
+		}
 
-	trans.BytesOut = msg.Size
-	trans.Avro = msg.Fields
+		trans.BytesOut = msg.Size
+		trans.Avro = msg.Fields
 
-	trans.ResponseTime = int32(msg.Ts.Sub(trans.ts).Nanoseconds() / 1e6) // resp_time in milliseconds
+		trans.ResponseTime = int32(msg.Ts.Sub(trans.ts).Nanoseconds() / 1e6) // resp_time in milliseconds
 
-	avro.publishTransaction(trans)
-	avro.transactions.Delete(trans.tuple.Hashable())
-
-	logp.Debug("avro", "HTTP transaction completed: %s\n", trans.Avro)
+		avro.publishTransaction(trans)
+		avro.transactions.Delete(trans.tuple.Hashable())
+	*/
 }
 
 func (avro *Avro) publishTransaction(t *AvroTransaction) {
-	logp.Debug("avro", "publishTransaction")
+	logp.Debug("avro", "publishing avro transaction")
 	if avro.results == nil {
 		return
 	}
@@ -308,23 +312,13 @@ func (avro *Avro) publishTransaction(t *AvroTransaction) {
 	event["type"] = "avro"
 	event["status"] = common.OK_STATUS
 	event["responsetime"] = t.ResponseTime
-
-	avromap := common.MapStr{
-		"request": t.Avro,
-	}
-
-	event["avro"] = avromap
-
+	event["avro"] = t.Avro
 	event["bytes_out"] = t.BytesOut
 	event["bytes_in"] = t.BytesIn
 	event["@timestamp"] = common.Time(t.ts)
 	event["src"] = &t.Src
 	event["dst"] = &t.Dst
 
-	if len(t.Notes) > 0 {
-		event["notes"] = t.Notes
-	}
-
-	logp.Debug("avro", "publishing %s", event)
+	logp.Debug("avrodetailed", "publishing %s", event)
 	avro.results.PublishEvent(event)
 }

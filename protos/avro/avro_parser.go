@@ -12,11 +12,10 @@ import (
 //Parses an encoded avro record into a Map.
 func parseAvro(input []byte) (common.MapStr, error) {
 
-	logp.Debug("avro", "parsing Avro")
-
 	fr, err := goavro.NewReader(goavro.FromReader(bytes.NewReader(input)))
 	if err != nil {
 		logp.Err("avro", "Unable to create reader for avro input.")
+		return nil, err
 	}
 
 	for fr.Scan() {
@@ -43,6 +42,6 @@ func avroRecordToMap(record *goavro.Record) common.MapStr {
 	for _, field := range record.Fields {
 		avroMap[field.Name] = fmt.Sprintf("%v", field.Datum)
 	}
-	logp.Debug("avro", "Parsed avro: %s", avroMap)
+	logp.Debug("avrodetailed", "Parsed avro: %s", avroMap)
 	return avroMap
 }

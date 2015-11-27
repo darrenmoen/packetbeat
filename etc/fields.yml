@@ -815,10 +815,10 @@ event:
       description: >
          Avro-specific event fields.
       fields:
-        - name: avro.request
+        - name: avro
           type: dict
           description: >
-            Avro request
+            Avro message
 raw:
   type: group
   description: These fields contain the raw transaction data.

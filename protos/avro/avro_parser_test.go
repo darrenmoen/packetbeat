@@ -8,6 +8,19 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// Test an empty byte array input.
+func TestEmptyInput(t *testing.T) {
+	if testing.Verbose() {
+		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"avro", "avrodetailed"})
+	}
+	
+	emptyByteArray := []byte("")
+	
+	avroAsJson, err := parseAvro(emptyByteArray)
+	assert.NotNil(t, err)
+	assert.Nil(t, avroAsJson)
+}
+
 // Test an uncomprocessed binary avro record.
 func TestAvroParsingWithNoCompression(t *testing.T) {
 	if testing.Verbose() {
