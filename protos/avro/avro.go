@@ -23,8 +23,6 @@ type Avro struct {
 	results publisher.Client
 }
 
-var debug = logp.MakeDebug("avro")
-
 func (avro *Avro) getTransaction(k common.HashableTcpTuple) *AvroTransaction {
 	v := avro.transactions.Get(k)
 	if v != nil {
@@ -223,7 +221,7 @@ func (avro *Avro) receivedAvroRequest(msg *AvroMessage) {
 
 	trans := avro.getTransaction(msg.TcpTuple.Hashable())
 	if trans != nil {
-		if len(trans.Avro) != 0 {
+		if trans.Avro.Len() != 0 {
 			logp.Warn("Two requests without a response. Dropping old request")
 		}
 	} else {
@@ -300,13 +298,18 @@ func (avro *Avro) publishTransaction(t *AvroTransaction) {
 	event["type"] = "avro"
 	event["status"] = common.OK_STATUS
 	event["responsetime"] = t.ResponseTime
-	event["avro"] = t.Avro
 	event["bytes_out"] = t.BytesOut
 	event["bytes_in"] = t.BytesIn
 	event["@timestamp"] = common.Time(t.ts)
 	event["src"] = &t.Src
 	event["dst"] = &t.Dst
 
-	logp.Debug("avrodetailed", "publishing %s", event)
-	avro.results.PublishEvent(event)
+	for record := t.Avro.Front(); record != nil; record = record.Next() {
+		event["avro"] = record
+		logp.Debug("avrodetailed", "publishing %s", event)
+		avro.results.PublishEvent(event)
+	}
+
+	logp.Debug("avrodetailed", "published %d avro records", t.Avro.Len())
+
 }

@@ -2,8 +2,10 @@ package avro
 
 import (
 	"encoding/hex"
+	"io/ioutil"
 	"testing"
 
+	"github.com/elastic/libbeat/common"
 	"github.com/elastic/libbeat/logp"
 	"github.com/stretchr/testify/assert"
 )
@@ -62,12 +64,15 @@ func TestAvroParsingWithNoCompression(t *testing.T) {
 	avroAsByteArray, err := hex.DecodeString(avroAsHex)
 	assert.Nil(t, err)
 
-	avroAsJson, err := parseAvro(avroAsByteArray)
+	jsonList, err := parseAvro(avroAsByteArray)
 	assert.Nil(t, err)
-	assert.NotEmpty(t, avroAsJson)
+	assert.NotEmpty(t, jsonList)
+	assert.Equal(t, 1, jsonList.Len())
 
-	assert.Equal(t, "elastic", avroAsJson["to"])
-	assert.Equal(t, "hello", avroAsJson["subject"])
+	record := jsonList.Front().Value.(common.MapStr)
+
+	assert.Equal(t, "elastic", record["to"])
+	assert.Equal(t, "hello", record["subject"])
 }
 
 // Test a deflate compressed binary avro record.
@@ -95,10 +100,30 @@ func TestAvroParsingWithDeflateCompression(t *testing.T) {
 	avroAsByteArray, err := hex.DecodeString(avroAsHex)
 	assert.Nil(t, err)
 
-	avroAsJson, err := parseAvro(avroAsByteArray)
+	jsonList, err := parseAvro(avroAsByteArray)
 	assert.Nil(t, err)
-	assert.NotEmpty(t, avroAsJson)
+	assert.NotEmpty(t, jsonList)
+	assert.Equal(t, 1, jsonList.Len())
 
-	assert.Equal(t, "elastic", avroAsJson["to"])
-	assert.Equal(t, "hello", avroAsJson["subject"])
+	record := jsonList.Front().Value.(common.MapStr)
+
+	assert.Equal(t, "elastic", record["to"])
+	assert.Equal(t, "hello", record["subject"])
+}
+
+// Test avro with multiple record
+func TestAvroWithMultipleRecords(t *testing.T) {
+	if testing.Verbose() {
+		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"avro", "avrodetailed"})
+	}
+
+	dat, err := ioutil.ReadFile("../../tests/system/files/log.avro")
+	assert.Nil(t, err)
+
+	avroList, err := parseAvro(dat)
+	assert.Nil(t, err)
+	assert.NotEmpty(t, avroList)
+	assert.Equal(t, 36, avroList.Len())
+
+	// fmt.Print(string(dat))
 }

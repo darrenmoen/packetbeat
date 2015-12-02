@@ -1,6 +1,7 @@
 package avro
 
 import (
+	"container/list"
 	"time"
 
 	"github.com/elastic/libbeat/common"
@@ -17,8 +18,8 @@ type AvroMessage struct {
 	IsRequest bool
 	Size      uint64
 
-	// map of the parsed avro record
-	Fields common.MapStr
+	// list of the parsed avro records
+	Fields *list.List
 
 	//Timing
 	start int
@@ -46,8 +47,7 @@ type AvroTransaction struct {
 	BytesIn      uint64
 	Notes        []string
 
-	// maybe rename to Request and add response?
-	Avro common.MapStr
+	Avro *list.List
 }
 
 type avroPrivateData struct {

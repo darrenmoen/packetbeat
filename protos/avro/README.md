@@ -18,6 +18,5 @@ This implementation however is currently for asynchronous transport over TCP onl
 
   - Add more system tests
   - Test with a more complex Avro schema
-  - Performance test the Avro parsing approach (attempt parse on every packet)
 
 

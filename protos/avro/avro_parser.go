@@ -2,6 +2,7 @@ package avro
 
 import (
 	"bytes"
+	"container/list"
 	"fmt"
 
 	"github.com/elastic/libbeat/common"
@@ -9,14 +10,16 @@ import (
 	"github.com/linkedin/goavro"
 )
 
-//Parses an encoded avro record into a Map.
-func parseAvro(input []byte) (common.MapStr, error) {
+//Parses an encoded avro record into a list of Maps.
+func parseAvro(input []byte) (*list.List, error) {
 
 	fr, err := goavro.NewReader(goavro.FromReader(bytes.NewReader(input)))
 	if err != nil {
-		logp.Err("avro", "Unable to create reader for avro input.")
+		logp.Err("avro", "Unable to create reader for avro input: %s", input)
 		return nil, err
 	}
+
+	records := list.New()
 
 	for fr.Scan() {
 		datum, err := fr.Read()
@@ -29,11 +32,14 @@ func parseAvro(input []byte) (common.MapStr, error) {
 		if !ok {
 			logp.Debug("avro", "Expected: *goavro.Record, actual: %T; ", datum)
 		}
-		// TODO maybe return record.Name?
-		return avroRecordToMap(record), nil
+
+		// TODO maybe also return record.Name?
+		records.PushBack(avroRecordToMap(record))
 	}
 
-	return nil, err
+	logp.Debug("avrodetailed", "Returning %d avro records", records.Len())
+
+	return records, nil
 }
 
 func avroRecordToMap(record *goavro.Record) common.MapStr {
